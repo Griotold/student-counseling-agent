@@ -1,7 +1,7 @@
 langchain==0.3.13
 langchain-openai==0.3.11
 langchain-pinecone==0.2.13
-openai==1.59.5
+openai==1.68.2
 pinecone-client==5.0.1
 pydantic==2.11.1
 python-dotenv==1.0.1
