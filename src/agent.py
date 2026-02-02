@@ -3,7 +3,7 @@
 LangChain + Structured Output
 """
 import os
-from typing import List, Dict
+from typing import List, Dict, Union
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from dotenv import load_dotenv
@@ -26,6 +26,12 @@ class StudentCounselingAgent:
             temperature=0.7  # 친구 같은 톤 위해 약간 높게
         ).with_structured_output(CounselingResponse)
         
+        # 요약용 LLM (별도)
+        self.summary_llm = ChatOpenAI(
+            model="gpt-4o",
+            temperature=0
+        )
+        
         # RAG 검색기
         self.retriever = ManualRetriever()
         
@@ -33,7 +39,7 @@ class StudentCounselingAgent:
         self.conversation_history: List[Dict[str, str]] = []
         self.turn_count = 0
     
-    def chat(self, user_message: str) -> CounselingResponse:
+    def chat(self, user_message: str) -> Dict:
         """
         학생과 대화
         
@@ -41,21 +47,15 @@ class StudentCounselingAgent:
             user_message: 학생의 메시지
             
         Returns:
-            CounselingResponse: 구조화된 응답 (JSON)
+            Dict: 응답 + (종료 시) 종합 결과
         """
         # 턴 수 증가
         self.turn_count += 1
         
-        # 1. RAG 검색
-        context = self._retrieve_context(user_message)
+        # 1. 일반 응답 생성
+        response = self._generate_response(user_message)
         
-        # 2. 메시지 구성
-        messages = self._build_messages(user_message, context)
-        
-        # 3. LLM 호출 (Structured Output)
-        response: CounselingResponse = self.llm.invoke(messages)
-        
-        # 4. 히스토리 저장
+        # 2. 히스토리 저장
         self.conversation_history.append({
             "role": "user",
             "content": user_message
@@ -64,6 +64,27 @@ class StudentCounselingAgent:
             "role": "assistant",
             "content": response.답변
         })
+        
+        # 3. 종료 판단 시 종합 결과 생성
+        if response.종료_판단:
+            summary = self._generate_summary()
+            return {
+                **response.model_dump(),
+                "종합_결과": summary
+            }
+        
+        return response.model_dump()
+    
+    def _generate_response(self, user_message: str) -> CounselingResponse:
+        """응답 생성"""
+        # 1. RAG 검색
+        context = self._retrieve_context(user_message)
+        
+        # 2. 메시지 구성
+        messages = self._build_messages(user_message, context)
+        
+        # 3. LLM 호출 (Structured Output)
+        response: CounselingResponse = self.llm.invoke(messages)
         
         return response
     
@@ -112,48 +133,59 @@ class StudentCounselingAgent:
         
         return messages
     
-    def get_summary(self) -> Dict:
+    def _generate_summary(self) -> Dict:
         """
-        대화 종료 후 종합 결과
+        종합 결과 생성 (종료 시 자동 호출)
         
         Returns:
-            dict: 대화 요약, 최고 위험도, 권장사항 등
+            Dict: 종합 결과
         """
         if not self.conversation_history:
             return {
                 "총_대화_턴": 0,
-                "요약": "대화 없음"
+                "대화_요약": "대화 없음"
             }
         
-        # LLM으로 요약 생성
-        summary_prompt = f"""다음 대화를 요약하고 분석해주세요:
+        # 요약 프롬프트
+        summary_prompt = f"""다음 대화를 종합적으로 분석하고 요약해주세요.
 
 대화 내용:
 {self._format_history()}
 
-다음 형식으로 JSON 응답:
+다음 형식으로 JSON 응답해주세요:
 {{
   "총_대화_턴": {self.turn_count},
-  "대화_요약": "3-5문장 요약",
-  "주요_이슈": ["이슈1", "이슈2"],
+  "대화_요약": "전체 대화를 3-5문장으로 요약",
+  "주요_이슈": ["학생이 겪고 있는 주요 문제들"],
   "최고_위험_신호": "낮음|중간|높음",
-  "감지된_위험요인": ["위험요인 리스트"],
-  "다음_대화_가이드": "다음 대화 시 주의사항"
+  "감지된_위험요인": ["대화 전체에서 감지된 모든 위험 요인"],
+  "정서_변화": "대화 시작부터 종료까지의 정서 변화",
+  "다음_대화_가이드": "다음에 대화할 때 주의해야 할 점과 접근 방법"
 }}
 """
         
-        llm = ChatOpenAI(model="gpt-4o", temperature=0)
-        response = llm.invoke([SystemMessage(content=summary_prompt)])
+        response = self.summary_llm.invoke([
+            SystemMessage(content=summary_prompt)
+        ])
         
         # JSON 파싱
         import json
         try:
-            summary = json.loads(response.content)
-        except:
+            # JSON 추출 (```json ... ``` 제거)
+            content = response.content
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
+            
+            summary = json.loads(content.strip())
+        except Exception as e:
+            # 파싱 실패 시 기본 요약
             summary = {
                 "총_대화_턴": self.turn_count,
                 "대화_요약": "요약 생성 실패",
-                "오류": response.content
+                "오류": str(e),
+                "원본": response.content[:500]
             }
         
         return summary
@@ -188,12 +220,12 @@ if __name__ == "__main__":
     response1 = agent.chat(message1)
     
     print(f"학생: {message1}")
-    print(f"\nAI 답변: {response1.답변}")
-    print(f"정서적 고통: {response1.정서적_고통}")
-    print(f"자살 신호: {response1.자살_신호}")
-    print(f"감지된 위험요인: {response1.감지된_위험요인}")
-    print(f"권장 대응: {response1.권장_대응}")
-    print(f"종료 판단: {response1.종료_판단}")
+    print(f"\nAI 답변: {response1['답변']}")
+    print(f"정서적 고통: {response1['정서적_고통']}")
+    print(f"자살 신호: {response1['자살_신호']}")
+    print(f"감지된 위험요인: {response1['감지된_위험요인']}")
+    print(f"권장 대응: {response1['권장_대응']}")
+    print(f"종료 판단: {response1['종료_판단']}")
     
     # 테스트 시나리오 2: 중간 위험
     print("\n" + "=" * 80)
@@ -206,16 +238,16 @@ if __name__ == "__main__":
     response2 = agent.chat(message2)
     
     print(f"학생: {message2}")
-    print(f"\nAI 답변: {response2.답변}")
-    print(f"정서적 고통: {response2.정서적_고통}")
-    print(f"자살 신호: {response2.자살_신호}")
-    print(f"감지된 위험요인: {response2.감지된_위험요인}")
-    print(f"권장 대응: {response2.권장_대응}")
-    print(f"종료 판단: {response2.종료_판단}")
+    print(f"\nAI 답변: {response2['답변']}")
+    print(f"정서적 고통: {response2['정서적_고통']}")
+    print(f"자살 신호: {response2['자살_신호']}")
+    print(f"감지된 위험요인: {response2['감지된_위험요인']}")
+    print(f"권장 대응: {response2['권장_대응']}")
+    print(f"종료 판단: {response2['종료_판단']}")
     
-    # 테스트 시나리오 3: 높은 위험
+    # 테스트 시나리오 3: 높은 위험 (종료 조건 만족)
     print("\n" + "=" * 80)
-    print("[시나리오 3: 높은 위험 - 긴급]")
+    print("[시나리오 3: 높은 위험 - 긴급 (종료 조건 만족)]")
     print("-" * 80)
     
     agent.reset()  # 새 대화
@@ -224,23 +256,24 @@ if __name__ == "__main__":
     response3 = agent.chat(message3)
     
     print(f"학생: {message3}")
-    print(f"\nAI 답변: {response3.답변}")
-    print(f"정서적 고통: {response3.정서적_고통}")
-    print(f"자살 신호: {response3.자살_신호}")
-    print(f"감지된 위험요인: {response3.감지된_위험요인}")
-    print(f"권장 대응: {response3.권장_대응}")
-    print(f"종료 판단: {response3.종료_판단}")
+    print(f"\nAI 답변: {response3['답변']}")
+    print(f"정서적 고통: {response3['정서적_고통']}")
+    print(f"자살 신호: {response3['자살_신호']}")
+    print(f"감지된 위험요인: {response3['감지된_위험요인']}")
+    print(f"권장 대응: {response3['권장_대응']}")
+    print(f"종료 판단: {response3['종료_판단']}")
     
-    # 종합 결과
-    if response3.종료_판단:
+    # 종합 결과 (자동 생성됨!)
+    if response3.get('종합_결과'):
         print("\n" + "=" * 80)
-        print("대화 종료 - 종합 결과")
+        print("🎯 종합 결과 (자동 생성)")
         print("=" * 80)
         
-        summary = agent.get_summary()
+        summary = response3['종합_결과']
         print(f"\n총 대화 턴: {summary.get('총_대화_턴')}")
         print(f"대화 요약: {summary.get('대화_요약')}")
         print(f"주요 이슈: {summary.get('주요_이슈')}")
         print(f"최고 위험 신호: {summary.get('최고_위험_신호')}")
         print(f"감지된 위험요인: {summary.get('감지된_위험요인')}")
+        print(f"정서 변화: {summary.get('정서_변화')}")
         print(f"다음 대화 가이드: {summary.get('다음_대화_가이드')}")
