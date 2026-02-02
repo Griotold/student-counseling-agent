@@ -1,6 +1,8 @@
 # 💙 학생 정서 상담 AI Agent
+<img width="1452" height="780" alt="Image" src="https://github.com/user-attachments/assets/ed14edc0-5f56-4005-a299-1e92b22dd649" />
 
-학생자살위기대응매뉴얼 기반 AI 상담 에이전트
+- 학생자살위기대응매뉴얼 기반 AI 상담 에이전트
+- 스트림릿 배포 링크: https://student-counseling.streamlit.app/
 
 ---
 
@@ -20,6 +22,19 @@
 - Vector DB: Pinecone (text-embedding-3-large, 3072차원)
 - Framework: LangChain
 - UI: Streamlit
+
+---
+
+## 사용 모습
+
+### 자살 신호: 중간 / 정서적 고통: 높음
+<img width="1453" height="806" alt="Image" src="https://github.com/user-attachments/assets/a0256820-a2c8-480a-8b74-25526a7c0028" />
+
+### 자살 신호: 높음 / 정서적 고통 : 높음
+<img width="1043" height="526" alt="Image" src="https://github.com/user-attachments/assets/2bac3603-b96c-4f51-8a74-886b55076b06" />
+
+### 대화 요약
+<img width="1052" height="622" alt="Image" src="https://github.com/user-attachments/assets/6653bf08-e990-4dc9-bb0d-e020b437d26e" />
 
 ---
 
