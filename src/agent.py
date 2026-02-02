@@ -3,13 +3,14 @@
 LangChain + Structured Output
 """
 import os
-from typing import List, Dict, Union
+import json
+from typing import List, Dict
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from dotenv import load_dotenv
 
 from .models import CounselingResponse
-from .prompts import SYSTEM_PROMPT, CONTEXT_PROMPT
+from .prompts import SYSTEM_PROMPT, CONTEXT_PROMPT, SUMMARY_PROMPT
 from .retriever import ManualRetriever
 
 load_dotenv()
@@ -133,6 +134,14 @@ class StudentCounselingAgent:
         
         return messages
     
+    def _format_history(self) -> str:
+        """대화 히스토리 포맷"""
+        formatted = []
+        for msg in self.conversation_history:
+            role = "학생" if msg["role"] == "user" else "AI"
+            formatted.append(f"{role}: {msg['content']}")
+        return "\n".join(formatted)
+    
     def _generate_summary(self) -> Dict:
         """
         종합 결과 생성 (종료 시 자동 호출)
@@ -146,30 +155,17 @@ class StudentCounselingAgent:
                 "대화_요약": "대화 없음"
             }
         
-        # 요약 프롬프트
-        summary_prompt = f"""다음 대화를 종합적으로 분석하고 요약해주세요.
-
-대화 내용:
-{self._format_history()}
-
-다음 형식으로 JSON 응답해주세요:
-{{
-  "총_대화_턴": {self.turn_count},
-  "대화_요약": "전체 대화를 3-5문장으로 요약",
-  "주요_이슈": ["학생이 겪고 있는 주요 문제들"],
-  "최고_위험_신호": "낮음|중간|높음",
-  "감지된_위험요인": ["대화 전체에서 감지된 모든 위험 요인"],
-  "정서_변화": "대화 시작부터 종료까지의 정서 변화",
-  "다음_대화_가이드": "다음에 대화할 때 주의해야 할 점과 접근 방법"
-}}
-"""
+        # 프롬프트 구성
+        prompt = SUMMARY_PROMPT.format(
+            history=self._format_history(),
+            turn_count=self.turn_count
+        )
         
         response = self.summary_llm.invoke([
-            SystemMessage(content=summary_prompt)
+            SystemMessage(content=prompt)
         ])
         
         # JSON 파싱
-        import json
         try:
             # JSON 추출 (```json ... ``` 제거)
             content = response.content
@@ -189,14 +185,6 @@ class StudentCounselingAgent:
             }
         
         return summary
-    
-    def _format_history(self) -> str:
-        """대화 히스토리 포맷"""
-        formatted = []
-        for msg in self.conversation_history:
-            role = "학생" if msg["role"] == "user" else "AI"
-            formatted.append(f"{role}: {msg['content']}")
-        return "\n".join(formatted)
     
     def reset(self):
         """대화 초기화"""
